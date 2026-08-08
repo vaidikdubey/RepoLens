@@ -22,7 +22,7 @@ export default function LandingPage() {
 
             {/* Header / Navbar */}
             <header className="relative z-10 border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur-md">
-                <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+                <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between gap-1">
                     <div className="flex items-center gap-2">
                         <div className="p-1.5 bg-amber-500/10 border border-amber-500/30 rounded-lg">
                             <Code2 className="w-5 h-5 text-amber-400" />
@@ -34,7 +34,7 @@ export default function LandingPage() {
 
                     <Link
                         href="/chat"
-                        className="text-xs sm:text-sm font-semibold text-zinc-950 bg-amber-500 hover:bg-amber-400 px-4 py-2 rounded-lg transition-all duration-200 shadow-md shadow-amber-500/10 flex items-center gap-1.5"
+                        className="text-xs sm:text-sm font-semibold text-zinc-950 bg-amber-500 hover:bg-amber-400 px-3 md:px-4 py-2 rounded-lg transition-all duration-200 shadow-md shadow-amber-500/10 flex items-center gap-1 md:gap-1.5"
                     >
                         Launch Terminal
                         <ArrowRight className="w-4 h-4" />
@@ -75,7 +75,7 @@ export default function LandingPage() {
                         <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                     </Link>
                     <a
-                        href="https://github.com"
+                        href="https://github.com/vaidikdubey/RepoLens"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="w-full sm:w-auto text-sm font-semibold text-zinc-300 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 px-6 py-3.5 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
@@ -138,7 +138,7 @@ export default function LandingPage() {
                     <div className="flex items-center gap-4 text-zinc-400">
                         <span className="flex items-center gap-1.5">
                             <Layers className="w-3.5 h-3.5 text-amber-400" />{" "}
-                            Powered by Gemini & Pinecone
+                            Powered by <Link href="https://aistudio.google.com/welcome" target="_blank" className="text-blue-600 visited:text-purple-500 hover:underline hover:underline-offset-2">Gemini</Link> & <Link href="https://www.pinecone.io/" target="_blank" className="text-blue-600 visited:text-purple-500 hover:underline hover:underline-offset-2">Pinecone</Link>
                         </span>
                     </div>
                 </div>
