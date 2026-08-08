@@ -39,7 +39,6 @@ export const metadata: Metadata = {
     description:
       "RAG-powered web playground for exploring GitHub repositories with Gemini and Pinecone.",
   },
-  themeColor: "#09090b",
   icons: {
     icon: "/favicon.svg"
   }

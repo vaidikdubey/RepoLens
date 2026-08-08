@@ -118,7 +118,7 @@ export default function Home() {
   return (
     <div className="flex flex-col lg:flex-row h-screen bg-zinc-950 text-zinc-100 font-sans overflow-hidden">
       {/* Top Section (Small Screens) / Left Sidebar (Large Screens) */}
-      <div className="w-full lg:w-80 xl:w-96 border-b lg:border-b-0 lg:border-r border-zinc-800 p-4 sm:p-6 flex flex-col gap-4 sm:gap-6 bg-zinc-900/50 flex-shrink-0">
+      <div className="w-full lg:w-80 xl:w-96 border-b lg:border-b-0 lg:border-r border-zinc-800 p-4 sm:p-6 flex flex-col gap-4 sm:gap-6 bg-zinc-900/50 shrink-0">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2 text-amber-400">
             <Code className="w-6 h-6 sm:w-7 sm:h-7 text-amber-400" /> RepoLens

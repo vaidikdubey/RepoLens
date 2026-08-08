@@ -1,36 +1,156 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# RepoLens 🔍
 
-## Getting Started
+> **RAG-powered codebase exploration tool leveraging Gemini AI and Pinecone vector search.**
 
-First, run the development server:
+RepoLens ingests public GitHub repositories, parses and chunks source files, generates embeddings, and allows users to perform context-aware semantic searches across complex codebases with precise file-path attributions.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+---
+
+## 🌟 Key Features
+
+- ⚡ **Automated Repository Ingestion:** Fetches and processes public GitHub repositories directly from a URL.
+- 🎯 **Context-Aware Code QA:** Uses Retrieval-Augmented Generation (RAG) to ground AI responses in actual repository files, eliminating hallucinations.
+- 📍 **Source Attribution:** Every generated answer cites the specific files used as context.
+- 🛠️ **Fully Typed Architecture:** Built with TypeScript end-to-end with strict type checks.
+- 📱 **Responsive Dual-Panel UI:** Clean split-view layout for desktop and stacked interface for mobile devices using Tailwind CSS and shadcn aesthetics.
+
+---
+
+## 🏗️ Architecture Overview
+
+              +-----------------------+
+              |  GitHub Repository    |
+              +-----------+-----------+
+                          |
+                          v
+              +-----------------------+
+              |  Ingestion Pipeline   |
+              |  (File Parser/Chunker)|
+              +-----------+-----------+
+                          |
+                          v
+              +-----------------------+
+              |  Vector Storage       |
+              |  (Pinecone DB)        |
+              +-----------+-----------+
+                          |
+                          v
+                +-------------------+     
+                | User Prompt / QA  +     
+                +-------------------+
+                          |
+                          v
+              +---+-------------------+
+              | RAG Retrieval         |
+              | (Gemini Embeddings)   |
+              +-----------+-----------+
+                          |
+                          v
+              +-----------+-----------+
+              | Contextual Answer     |
+              | & File Attributions   |
+              +-----------------------+
+
+---
+
+## 🛠️ Tech Stack
+
+- **Framework:** Next.js (App Router, Server Actions, API Routes)
+- **Language:** TypeScript
+- **AI & ML:** Google Gemini AI API (`@google/genai`)
+- **Vector Database:** Pinecone (`@pinecone-database/pinecone`)
+- **Styling:** Tailwind CSS, Lucide React Icons
+- **Deployment:** Vercel
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+Ensure you have the following installed and set up:
+- **Node.js:** v18.x or higher
+- **npm / pnpm / yarn**
+- **Pinecone Account:** An active index configured for vector embeddings.
+- **Google Gemini API Key:** Access to Gemini API.
+
+---
+
+### Environment Variables
+
+Create a `.env.local` file in the root directory and add the following keys:
+
+```env
+# Google Gemini API
+GEMINI_API_KEY=your_gemini_api_key_here
+# Pinecone Vector Database
+PINECONE_API_KEY=your_pinecone_api_key_here
+PINECONE_INDEX=your_pinecone_index_name
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Installation & Local Setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Clone the repository
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+    git clone https://github.com/vaidikdubey/RepoLens
+    cd repolens
+```
 
-## Learn More
+### Install dependencies
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+    npm install
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Run the app
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+    npm run dev
+```
 
-## Deploy on Vercel
+### Open in browser
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Navigate to ```http://localhost:3000``` to access the application.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 📂 Project Structure
+
+```text
+repolens/
+├── app/
+│   ├── api/
+│   │   ├── chat/route.ts      # Query vector store & stream Gemini responses
+│   │   └── ingest/route.ts    # Parse repo, chunk code, store embeddings
+│   ├── chat/page.tsx          # Dual-panel QA Terminal interface
+│   ├── layout.tsx             # Root layout & global metadata
+│   └── page.tsx               # Client landing page
+├── lib/                       # Gemini & Pinecone client configurations
+└── public/                    # Static assets & icons
+```
+
+---
+
+## Screenshots
+
+- Landing Page
+![Landing Page](./public/landing-page.png)
+
+- Chat Interface
+![Chat Interface](./public/chat-interface.png)
+
+---
+
+## Author
+
+### Vaidik Dubey
+
+- GitHub: https://github.com/vaidikdubey
+- LinkedIn: https://linkedin.com/in/vaidikdubey
+
+## 🤝 Contributing
+
+Contributions, issues, and feature requests are welcome! Feel free to check the issues page or submit a pull request.
+
+---
+
+⭐ If you found this project useful, consider giving it a star!
