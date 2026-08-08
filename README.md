@@ -1,4 +1,4 @@
-# RepoLens 🔍
+# [RepoLens 🔍](https://repolens-rag.vercel.app/)
 
 > **RAG-powered codebase exploration tool leveraging Gemini AI and Pinecone vector search.**
 
