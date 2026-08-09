@@ -51,8 +51,8 @@ export async function answerRepoQuestion(repo: string, question: string) {
 
     const prompt = `Context Code Snippets:\n${contextText}\n\nUser Question: ${question}`;
 
-    //4. Generate response using Gemini
-    const response = await ai.models.generateContent({
+    //4. Generate response using Gemini. Streaming response directly to frontend to reduce latency
+    const responseStream = await ai.models.generateContentStream({
         model: "gemini-3.6-flash",
         contents: prompt,
         config: {
@@ -61,7 +61,7 @@ export async function answerRepoQuestion(repo: string, question: string) {
     })
 
     return {
-        answer: response.text || "No response generated.",
+        answer: responseStream,
         sources: relevantChunks,
     }
 }
