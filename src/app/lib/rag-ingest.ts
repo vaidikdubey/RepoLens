@@ -8,8 +8,8 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
 const index = pinecone.Index({ name: process.env.PINECONE_INDEX_NAME! });
 
-//Rate limit delay
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+//Rate limit delay (can be used in case of issues with model)
+// const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 //Text chunking by character limit
 function chunkText(text: string, chunkSize = 800, overlap = 100): string[] {
@@ -87,16 +87,14 @@ export async function ingestGithubRepo(owner: string, repo: string) {
             for (let i = 0; i < chunks.length; i++) {
                 const chunk = chunks[i];
 
-                //Delay 1.2s between calls to avoid rate limit errors
-                await delay(1200);
-
                 //3. Generate vector embedding with Gemini (or selected model)
                 const embeddingResponse = await ai.models.embedContent({
                     model: "gemini-embedding-001",
                     contents: chunk,
                 });
 
-                const embeddingValues = embeddingResponse.embeddings?.[0]?.values as number[];
+                const embeddingValues = embeddingResponse.embeddings?.[0]
+                    ?.values as number[];
 
                 if (embeddingValues) {
                     //Sanitized ID for Pinecone
@@ -124,7 +122,7 @@ export async function ingestGithubRepo(owner: string, repo: string) {
 
         for (let i = 0; i < vectorsToUpsert.length; i += batchSize) {
             const batch = vectorsToUpsert.slice(i, i + batchSize);
-            await index.upsert({records: batch});
+            await index.upsert({ records: batch });
         }
     }
 

@@ -14,35 +14,47 @@ export async function POST(req: Request) {
                 { status: 400 },
             );
 
-        const { responseStream, sources } = await answerRepoQuestion(repo, question);
+        const { responseStream, sources } = await answerRepoQuestion(
+            repo,
+            question,
+        );
+
+        //Strip down sources to aviod giant payload overhead in headers
+        const cleanSources = sources.map((s) => ({
+            filePath: s.filePath,
+            score: s.score,
+        }));
 
         const encoder = new TextEncoder();
 
         //Create a Web ReadableStream from Gemini's async generator
         const stream = new ReadableStream({
-            async start(controller) { 
+            async start(controller) {
                 try {
-                    for await (const chunk of responseStream) { 
-                        const text = chunk.text
+                    for await (const chunk of responseStream) {
+                        const text = chunk.text;
 
-                        if (text) { 
-                            controller.enqueue(encoder.encode(text))
+                        if (text) {
+                            controller.enqueue(encoder.encode(text));
                         }
                     }
-                    controller.close()
+                    controller.close();
                 } catch (error) {
-                    controller.error(error)
+                    controller.error(error);
                 }
-            }
-        })
+            },
+        });
 
         //Sending sources via custom JSON header and stream the plain text body (to send in 1 res)
         return new Response(stream, {
             headers: {
                 "Content-Type": "text/plain; charset=utf-8",
-                "x-rag-sources": JSON.stringify(sources)
-            }
-        })
+                //Safe URL encoding to prevent non-ASCII characters from breaking headers
+                "x-rag-sources": encodeURIComponent(
+                    JSON.stringify(cleanSources),
+                ),
+            },
+        });
     } catch (error) {
         console.error("Chat Query Error: ", error);
         return NextResponse.json(
