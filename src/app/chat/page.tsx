@@ -170,8 +170,6 @@ export default function Home() {
         }
     };
 
-    console.log(ingestStatus);
-
     return (
         <div className="flex flex-col lg:flex-row h-screen bg-zinc-950 text-zinc-100 font-sans overflow-hidden">
             {/* Top Section (Small Screens) / Left Sidebar (Large Screens) */}
