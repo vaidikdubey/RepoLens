@@ -61,7 +61,7 @@ export async function answerRepoQuestion(repo: string, question: string) {
     })
 
     return {
-        answer: responseStream,
+        responseStream,
         sources: relevantChunks,
     }
 }

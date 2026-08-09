@@ -14,13 +14,35 @@ export async function POST(req: Request) {
                 { status: 400 },
             );
 
-        const result = await answerRepoQuestion(repo, question);
+        const { responseStream, sources } = await answerRepoQuestion(repo, question);
 
-        return NextResponse.json({
-            success: true,
-            message: "Repo question answer generated successfully",
-            result,
-        });
+        const encoder = new TextEncoder();
+
+        //Create a Web ReadableStream from Gemini's async generator
+        const stream = new ReadableStream({
+            async start(controller) { 
+                try {
+                    for await (const chunk of responseStream) { 
+                        const text = chunk.text
+
+                        if (text) { 
+                            controller.enqueue(encoder.encode(text))
+                        }
+                    }
+                    controller.close()
+                } catch (error) {
+                    controller.error(error)
+                }
+            }
+        })
+
+        //Sending sources via custom JSON header and stream the plain text body (to send in 1 res)
+        return new Response(stream, {
+            headers: {
+                "Content-Type": "text/plain; charset=utf-8",
+                "x-rag-sources": JSON.stringify(sources)
+            }
+        })
     } catch (error) {
         console.error("Chat Query Error: ", error);
         return NextResponse.json(
