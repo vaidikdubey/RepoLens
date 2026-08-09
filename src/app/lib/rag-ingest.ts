@@ -8,8 +8,8 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
 const index = pinecone.Index({ name: process.env.PINECONE_INDEX_NAME! });
 
-//Rate limit delay (can be used in case of issues with model)
-// const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+//Rate limit delay
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export type ProgressCallback = (message: string, progress: number) => void;
 
@@ -184,6 +184,11 @@ export async function ingestGithubRepo(
     const EMBED_BATCH_SIZE = 10; //Batch items per embedding call
 
     for (let i = 0; i < allChunksWithMeta.length; i += EMBED_BATCH_SIZE) {
+        // Add 500ms delay between batch requests to respect Gemini API rate limits
+        if (i > 0) {
+            await delay(500);
+        }
+        
         const batch = allChunksWithMeta.slice(i, i + EMBED_BATCH_SIZE);
         const contents = batch.map((item) => item.chunk);
 
