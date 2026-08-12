@@ -27,6 +27,7 @@ interface VectorRecord {
 //Text chunking by character limit
 function chunkText(text: string, chunkSize = 1000, overlap = 100): string[] {
     // Sanitize any malformed unicode in the source file first
+    //typeof check prevents the code from throwing a TypeError in non-compatible environments
     const cleanText =
         typeof text.toWellFormed === "function" ? text.toWellFormed() : text;
     const chunks: string[] = [];
@@ -35,7 +36,7 @@ function chunkText(text: string, chunkSize = 1000, overlap = 100): string[] {
     while (start < cleanText.length) {
         let end = Math.min(start + chunkSize, cleanText.length);
 
-        // Prevent splitting surrogate pairs at the end boundary
+        // Prevent splitting surrogate pairs at the end boundary which will cause malformed strings
         if (
             end < cleanText.length &&
             isHighSurrogate(cleanText.charCodeAt(end - 1))
@@ -44,13 +45,17 @@ function chunkText(text: string, chunkSize = 1000, overlap = 100): string[] {
         }
 
         const chunk = cleanText.slice(start, end);
+
+        //Sanitize chunk again to prevent pushing malformed chunks with compatibility checks
         chunks.push(
             typeof chunk.toWellFormed === "function"
                 ? chunk.toWellFormed()
                 : chunk,
         );
 
+        //To get the overlap in the next chunk we adjust the start value
         let nextStart = end - overlap;
+
         // Prevent starting on a low surrogate at the start boundary
         if (nextStart > 0 && isLowSurrogate(cleanText.charCodeAt(nextStart))) {
             nextStart++;
@@ -109,6 +114,7 @@ export async function ingestGithubRepo(
     const repoInfo = await octokit.rest.repos.get({ owner, repo });
     const defaultBranch = repoInfo.data.default_branch;
 
+    //Without recursive "1", github omits the nested subtree data and only returns their sha's, but with recursive "1", github flattern all subtrees into an array present in treeResponse.data.tree
     const treeResponse = await octokit.rest.git.getTree({
         owner,
         repo,
@@ -146,14 +152,17 @@ export async function ingestGithubRepo(
         });
 
         if ("content" in fileData.data && fileData.data.content) {
+            //content contains base64 encoded string data and native JS can't convert it to utf-8 string. So we create a buffer of that string to use .toString() to read the content.
             const content = Buffer.from(
                 fileData.data.content,
                 "base64",
             ).toString("utf-8");
+
+            //Create chunks of the content with the helper function along with data sanitization.
             const chunks = chunkText(content);
 
             chunks.forEach((chunk, i) => {
-                // Ensures string contains valid Unicode scalar values for JSON serialization
+                // Ensures string contains valid Unicode scalar values for JSON serialization. Implemented custom wellformed for un-supported environments.
                 const sanitizedChunk =
                     typeof chunk.toWellFormed === "function"
                         ? chunk.toWellFormed()
@@ -188,14 +197,14 @@ export async function ingestGithubRepo(
         if (i > 0) {
             await delay(500);
         }
-        
+
         const batch = allChunksWithMeta.slice(i, i + EMBED_BATCH_SIZE);
         const contents = batch.map((item) => item.chunk);
 
-        //3. Generate vector embedding with Gemini (or selected model) with batch call
+        //3. Generate vector embedding with Gemini (or selected model) with created batch of 10
         const embeddingResponse = await ai.models.embedContent({
             model: "gemini-embedding-001",
-            contents: contents,
+            contents,
         });
 
         const embeddings = embeddingResponse.embeddings || [];
@@ -205,9 +214,9 @@ export async function ingestGithubRepo(
 
             if (values) {
                 //Sanitized ID for Pinecone
-                const vectorId = `${owner}_${repo}_${item.filePath.replace(/[\/\.]/g, "_")}_chunk_${item.chunkIndex}`;
+                const id = `${owner}_${repo}_${item.filePath.replace(/[\/\.]/g, "_")}_chunk_${item.chunkIndex}`;
                 vectorsToUpsert.push({
-                    id: vectorId,
+                    id,
                     values,
                     metadata: {
                         repo: `${owner}/${repo}`,
@@ -219,6 +228,7 @@ export async function ingestGithubRepo(
             }
         });
 
+        //For UI updates, to show progress to user. Calculates percentage b/w 50-85
         const batchProgress = Math.min(
             85,
             50 +
@@ -227,17 +237,17 @@ export async function ingestGithubRepo(
                 ),
         );
         onProgress?.(
-            `Generating embeddings (${Math.min(i + EMBED_BATCH_SIZE, allChunksWithMeta.length)}/${allChunksWithMeta.length})...`,
+            `Generated embeddings (${Math.min(i + EMBED_BATCH_SIZE, allChunksWithMeta.length)}/${allChunksWithMeta.length})...`,
             batchProgress,
         );
     }
 
-    onProgress?.("Upserting vectors into Pinecone database in parallel...", 90);
+    onProgress?.("Upserting vectors into Pinecone database...", 90);
 
     //4. Parallel Batch Upsert to Pinecone
     if (vectorsToUpsert.length > 0) {
         //Processing in batches of 100 to stay safely under payload limits
-        const PINECONE_BATCH_SIZE = 50;
+        const PINECONE_BATCH_SIZE = 100;
         const pineconePromises = [];
 
         for (let i = 0; i < vectorsToUpsert.length; i += PINECONE_BATCH_SIZE) {
@@ -248,7 +258,10 @@ export async function ingestGithubRepo(
         await Promise.all(pineconePromises);
     }
 
-    onProgress?.("Ingestion complete!", 100);
+    onProgress?.(
+        `Ingestion complete. Successfully ingested ${selectedFiles.length} files!`,
+        100,
+    );
 
     return {
         success: true,
