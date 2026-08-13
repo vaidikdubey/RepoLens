@@ -122,62 +122,90 @@ export async function ingestGithubRepo(
         recursive: "1",
     });
 
-    const files = treeResponse.data.tree.filter(
-        (item) =>
-            item.type === "blob" &&
-            item.path &&
-            VALID_EXTENSIONS.some((ext) => item.path?.endsWith(ext)) &&
-            !IGNORED_PATTERNS.some((pattern) => item.path?.includes(pattern)) &&
-            (item.size ?? 0) < 100000, // Skip files larger than ~100KB
-    );
+    // SMART FILTERING: Strip lock files, config overhead, test dumps
+    const files = treeResponse.data.tree.filter((item) => {
+        if (item.type !== "blob" || !item.path) return false;
 
-    //Limit processing to first 10 code files for fast ingestion
-    const selectedFiles = files.slice(0, 10);
+        // Ignore configs, lock files, minified bundles, and non-essential docs
+        const lowerPath = item.path.toLowerCase();
+        if (
+            lowerPath.includes("min.js") ||
+            lowerPath.includes("test") ||
+            lowerPath.includes("spec") ||
+            lowerPath.endsWith(".config.js") ||
+            lowerPath.endsWith(".config.ts")
+        ) {
+            return false;
+        }
+
+        const hasValidExt = VALID_EXTENSIONS.some((ext) =>
+            item.path?.endsWith(ext),
+        );
+        const isNotIgnored = !IGNORED_PATTERNS.some((pattern) =>
+            item.path?.includes(pattern),
+        );
+        const isReasonableSize =
+            (item.size ?? 0) > 50 && (item.size ?? 0) < 80000; // Skip tiny/empty and >80KB files
+
+        return hasValidExt && isNotIgnored && isReasonableSize;
+    });
+
     const allChunksWithMeta: {
         chunk: string;
         filePath: string;
         chunkIndex: number;
     }[] = [];
 
-    onProgress?.(`Reading and chunking ${selectedFiles.length} files...`, 30);
+    onProgress?.(`Reading and chunking ${files.length} files...`, 20);
 
-    for (const file of selectedFiles) {
+    for (let idx = 0; idx < files.length; idx++) {
+        const file = files[idx];
         if (!file.path) continue;
 
         //2. Fetch raw file content
-        const fileData = await octokit.rest.repos.getContent({
-            owner,
-            repo,
-            path: file.path,
-        });
-
-        if ("content" in fileData.data && fileData.data.content) {
-            //content contains base64 encoded string data and native JS can't convert it to utf-8 string. So we create a buffer of that string to use .toString() to read the content.
-            const content = Buffer.from(
-                fileData.data.content,
-                "base64",
-            ).toString("utf-8");
-
-            //Create chunks of the content with the helper function along with data sanitization.
-            const chunks = chunkText(content);
-
-            chunks.forEach((chunk, i) => {
-                // Ensures string contains valid Unicode scalar values for JSON serialization. Implemented custom wellformed for un-supported environments.
-                const sanitizedChunk =
-                    typeof chunk.toWellFormed === "function"
-                        ? chunk.toWellFormed()
-                        : chunk.replace(
-                              /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/g,
-                              "",
-                          );
-
-                allChunksWithMeta.push({
-                    chunk: sanitizedChunk,
-                    filePath: file.path!,
-                    chunkIndex: i,
-                });
+        try {
+            const fileData = await octokit.rest.repos.getContent({
+                owner,
+                repo,
+                path: file.path,
             });
+
+            if ("content" in fileData.data && fileData.data.content) {
+                //content contains base64 encoded string data and native JS can't convert it to utf-8 string. So we create a buffer of that string to use .toString() to read the content.
+                const content = Buffer.from(
+                    fileData.data.content,
+                    "base64",
+                ).toString("utf-8");
+
+                //Create chunks of the content with the helper function along with data sanitization.
+                const chunks = chunkText(content);
+
+                chunks.forEach((chunk, i) => {
+                    // Ensures string contains valid Unicode scalar values for JSON serialization. Implemented custom wellformed for un-supported environments.
+                    const sanitizedChunk =
+                        typeof chunk.toWellFormed === "function"
+                            ? chunk.toWellFormed()
+                            : chunk.replace(
+                                  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/g,
+                                  "",
+                              );
+
+                    allChunksWithMeta.push({
+                        chunk: sanitizedChunk,
+                        filePath: file.path!,
+                        chunkIndex: i,
+                    });
+                });
+            }
+        } catch (error) {
+            console.warn(
+                `Failed to fetch file content for ${file.path}, skipping...`,
+                error,
+            );
         }
+
+        //Small delay every 10 files to avoid GitHub REST secondary rate limits
+        if (idx % 10 === 0 && idx > 0) await delay(200);
     }
 
     if (allChunksWithMeta.length === 0)
@@ -185,60 +213,86 @@ export async function ingestGithubRepo(
 
     onProgress?.(
         `Generating batch embeddings for ${allChunksWithMeta.length} code chunks...`,
-        50,
+        40,
     );
 
-    //Batching gemini embeddings
+    //Batching gemini embeddings with exponential backoff
     const vectorsToUpsert: VectorRecord[] = [];
-    const EMBED_BATCH_SIZE = 10; //Batch items per embedding call
+    const EMBED_BATCH_SIZE = 16; //Batch items per embedding call
 
     for (let i = 0; i < allChunksWithMeta.length; i += EMBED_BATCH_SIZE) {
-        // Add 500ms delay between batch requests to respect Gemini API rate limits
-        if (i > 0) {
-            await delay(500);
-        }
-
         const batch = allChunksWithMeta.slice(i, i + EMBED_BATCH_SIZE);
         const contents = batch.map((item) => item.chunk);
 
-        //3. Generate vector embedding with Gemini (or selected model) with created batch of 10
-        const embeddingResponse = await ai.models.embedContent({
-            model: "gemini-embedding-001",
-            contents,
-        });
+        let success = false;
+        let retries = 0;
+        const maxRetries = 5;
 
-        const embeddings = embeddingResponse.embeddings || [];
+        // Retry loop with exponential backoff for Gemini 429 rate limits
+        while (!success && retries < maxRetries) {
+            try {
+                // Enforcing a strict minimum delay between requests to avoid rate limits
+                await delay(1200);
 
-        batch.forEach((item, idx) => {
-            const values = embeddings[idx]?.values as number[];
-
-            if (values) {
-                //Sanitized ID for Pinecone
-                const id = `${owner}_${repo}_${item.filePath.replace(/[\/\.]/g, "_")}_chunk_${item.chunkIndex}`;
-                vectorsToUpsert.push({
-                    id,
-                    values,
-                    metadata: {
-                        repo: `${owner}/${repo}`,
-                        filePath: item.filePath,
-                        chunkIndex: item.chunkIndex,
-                        text: item.chunk,
-                    },
+                //3. Generate vector embedding with Gemini (or selected model) with created batch of 10
+                const embeddingResponse = await ai.models.embedContent({
+                    model: "gemini-embedding-001",
+                    contents,
                 });
-            }
-        });
 
-        //For UI updates, to show progress to user. Calculates percentage b/w 50-85
-        const batchProgress = Math.min(
+                const embeddings = embeddingResponse.embeddings || [];
+
+                batch.forEach((item, idx) => {
+                    const values = embeddings[idx]?.values as number[];
+
+                    if (values) {
+                        //Sanitized ID for Pinecone
+                        const id = `${owner}_${repo}_${item.filePath.replace(/[\/\.]/g, "_")}_chunk_${item.chunkIndex}`;
+                        vectorsToUpsert.push({
+                            id,
+                            values,
+                            metadata: {
+                                repo: `${owner}/${repo}`,
+                                filePath: item.filePath,
+                                chunkIndex: item.chunkIndex,
+                                text: item.chunk,
+                            },
+                        });
+                    }
+                });
+
+                success = true;
+            } catch (error: unknown) {
+                retries++;
+
+                const errorMessage = error instanceof Error ? error.message : String(error)
+                const errorStatus = (error as {status?:number})?.status
+
+                //Check if rate limited (429)
+                if (errorStatus === 429 || errorMessage.includes("429")) {
+                    const backoffTime = Math.pow(2, retries) * 2000; // 4s, 8s, 16s...
+                    console.warn(
+                        `Rate limit hit on Gemini API. Backing off for ${backoffTime}ms...`,
+                    );
+                    await delay(backoffTime);
+                } else {
+                    console.error(
+                        `Error requesting embeddings for batch starting at ${i}:`,
+                        error,
+                    );
+                    break; // Non-rate-limit error, abort retry loop
+                }
+            }
+        }
+
+        //For UI updates, to show progress to user. Calculates percentage b/w 40-85
+        const progressPercent = Math.min(
             85,
-            50 +
-                Math.round(
-                    ((i + EMBED_BATCH_SIZE) / allChunksWithMeta.length) * 35,
-                ),
+            40 + Math.round((i / allChunksWithMeta.length) * 45),
         );
         onProgress?.(
-            `Generated embeddings (${Math.min(i + EMBED_BATCH_SIZE, allChunksWithMeta.length)}/${allChunksWithMeta.length})...`,
-            batchProgress,
+            `Embedded ${Math.min(i + EMBED_BATCH_SIZE, allChunksWithMeta.length)} / ${allChunksWithMeta.length} chunks...`,
+            progressPercent,
         );
     }
 
@@ -248,24 +302,22 @@ export async function ingestGithubRepo(
     if (vectorsToUpsert.length > 0) {
         //Processing in batches of 100 to stay safely under payload limits
         const PINECONE_BATCH_SIZE = 100;
-        const pineconePromises = [];
 
         for (let i = 0; i < vectorsToUpsert.length; i += PINECONE_BATCH_SIZE) {
             const batch = vectorsToUpsert.slice(i, i + PINECONE_BATCH_SIZE);
-            pineconePromises.push(index.upsert({ records: batch }));
+            await index.upsert({ records: batch });
+            await delay(200); // Prevent hitting Pinecone free write rate spikes
         }
-
-        await Promise.all(pineconePromises);
     }
 
     onProgress?.(
-        `Ingestion complete. Successfully ingested ${selectedFiles.length} files!`,
+        `Ingestion complete. Successfully ingested ${files.length} files!`,
         100,
     );
 
     return {
         success: true,
-        processedFiles: selectedFiles.length,
+        processedFiles: files.length,
         totalChunks: vectorsToUpsert.length,
     };
 }
