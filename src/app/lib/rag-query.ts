@@ -33,7 +33,7 @@ export async function answerRepoQuestion(repo: string, question: string) {
 
     const relevantChunks: RelevantChunk[] = queryResult.matches.map(
         (match) => ({
-            filePath: (match.metadata?.filePath as string) || "Unknown File",
+            filePath: (match.metadata?.filePath as string) || "Unknown File Path",
             text: (match.metadata?.text as string) || "",
             score: match.score || 0,
         }),
