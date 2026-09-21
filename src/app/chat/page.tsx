@@ -26,6 +26,35 @@ export default function Home() {
     const [messages, setMessages] = useState<Message[]>([]);
     const [asking, setAsking] = useState<boolean>(false);
 
+    const [estimating, setEstimating] = useState<boolean>(false);
+    const [estimate, setEstimate] = useState<{
+        estimatedChunks: number;
+        fileCount: number;
+        estimatedMinutes: number;
+        safe: boolean;
+    } | null>(null);
+
+    const handleEstimate = async (url: string) => {
+        if (!url.trim() || !url.includes("github.com")) return;
+
+        setEstimating(true);
+        setEstimate(null);
+
+        try {
+            const res = await fetch("/api/estimate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ repoUrl: url }),
+            });
+            const data = await res.json();
+            if (!data.error) setEstimate(data);
+        } catch {
+            // Silent fail — estimate is optional
+        } finally {
+            setEstimating(false);
+        }
+    };
+
     const handleIngest = async (e: React.SyntheticEvent) => {
         e.preventDefault();
         if (!repoUrl.trim()) return;
@@ -67,7 +96,7 @@ export default function Home() {
                         } else if (payload.type === "complete") {
                             setActiveRepo(payload.repoSlug);
                             setIngestStatus(
-                                `Successfully ingested ${payload.result?.processedFiles ?? 0} files (${payload.result?.totalChunks ?? 0} vectors)!`
+                                `Successfully ingested ${payload.result?.processedFiles ?? 0} files (${payload.result?.totalChunks ?? 0} vectors)!`,
                             );
                             setIngestProgress(100);
                         } else if (payload.type === "error") {
@@ -78,7 +107,8 @@ export default function Home() {
                 }
             }
         } catch (err: unknown) {
-            const errorMessage = err instanceof Error ? err.message : "Unknown error occurred";
+            const errorMessage =
+                err instanceof Error ? err.message : "Unknown error occurred";
             setIngestStatus(`Failed: ${errorMessage}`);
             setIngestProgress(0);
         } finally {
@@ -155,7 +185,9 @@ export default function Home() {
             }
         } catch (err: unknown) {
             const errorMessage =
-                err instanceof Error ? err.message : "Unknown error occurred. Please try again later.";
+                err instanceof Error
+                    ? err.message
+                    : "Unknown error occurred. Please try again later.";
             setMessages((prev) => {
                 const updated = [...prev];
                 const lastIdx = updated.length - 1;
@@ -176,7 +208,8 @@ export default function Home() {
             <div className="w-full lg:w-80 xl:w-96 border-b lg:border-b-0 lg:border-r border-zinc-800 p-4 sm:p-6 flex flex-col gap-4 sm:gap-6 bg-zinc-900/50 shrink-0">
                 <div>
                     <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2 text-amber-400">
-                        <Code className="w-6 h-6 sm:w-7 sm:h-7 text-amber-400" /> RepoLens
+                        <Code className="w-6 h-6 sm:w-7 sm:h-7 text-amber-400" />{" "}
+                        RepoLens
                     </h1>
                     <p className="text-xs text-zinc-400 mt-1">
                         RAG-powered codebase exploration using Gemini & Pinecone
@@ -192,19 +225,64 @@ export default function Home() {
                             type="url"
                             placeholder="https://github.com/owner/repo"
                             value={repoUrl}
-                            onChange={(e) => setRepoUrl(e.target.value)}
+                            onChange={(e) => {
+                                setRepoUrl(e.target.value);
+                                setEstimate(null);
+                            }}
+                            onBlur={(e) => handleEstimate(e.target.value)}
                             className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-md text-sm text-zinc-200 focus:outline-none focus:border-amber-500"
                         />
                     </div>
+
+                    {/* Estimate display */}
+                    {estimating && (
+                        <p className="text-[10px] text-zinc-500 flex items-center gap-1">
+                            <Loader2 className="w-3 h-3 animate-spin" />{" "}
+                            Estimating repo size...
+                        </p>
+                    )}
+
+                    {estimate && !estimating && (
+                        <div
+                            className={`text-[10px] px-2 py-1.5 rounded border flex items-start gap-1 ${
+                                estimate.safe
+                                    ? "bg-green-950/30 border-green-800/50 text-green-400"
+                                    : "bg-red-950/30 border-red-800/50 text-red-400"
+                            }`}
+                        >
+                            <span className="shrink-0">
+                                {estimate.safe ? "✓" : "⚠"}
+                            </span>
+                            <span>
+                                ~{estimate.estimatedChunks} chunks ·{" "}
+                                {estimate.fileCount} files · ~
+                                {estimate.estimatedMinutes} min
+                                {!estimate.safe && (
+                                    <span className="block mt-0.5 text-red-300">
+                                        Large repo — ingestion may be slow
+                                    </span>
+                                )}
+                            </span>
+                        </div>
+                    )}
+
                     <button
                         type="submit"
-                        disabled={ingesting || !repoUrl}
-                        className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-sm py-2 px-4 rounded-md transition flex items-center justify-center gap-2 disabled:bg-zinc-800 disabled:text-zinc-500 cursor-pointer disabled:cursor-not-allowed whitespace-nowrap"
+                        disabled={ingesting || !repoUrl || estimating}
+                        className={`w-full font-semibold text-sm py-2.5 px-4 rounded-md transition disabled:bg-zinc-800 disabled:text-zinc-500 cursor-pointer disabled:cursor-not-allowed
+        ${
+            estimate && !estimate.safe
+                ? "bg-amber-700 hover:bg-amber-600 text-zinc-100"
+                : "bg-amber-500 hover:bg-amber-400 text-zinc-950"
+        }`}
                     >
                         {ingesting ? (
-                            <>
-                                <Loader2 className="w-4 h-4 animate-spin text-zinc-950" /> Ingesting...
-                            </>
+                            <span className="flex items-center justify-center gap-2">
+                                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                                Ingesting...
+                            </span>
+                        ) : estimate && !estimate.safe ? (
+                            "Ingest Anyway"
                         ) : (
                             "Ingest & Analyze"
                         )}
@@ -215,7 +293,7 @@ export default function Home() {
                 {(ingesting || ingestStatus) && (
                     <div className="p-3 bg-zinc-950 border border-zinc-800 rounded-md text-xs text-zinc-300 space-y-2">
                         <div className="flex justify-between items-center">
-                            <span className="truncate pr-2 font-medium text-zinc-300">
+                            <span className="font-medium text-zinc-300 wrap-break-words leading-relaxed">
                                 {ingestStatus || "Initializing..."}
                             </span>
                             {ingesting && (
@@ -239,7 +317,8 @@ export default function Home() {
                 {activeRepo && (
                     <div className="lg:mt-auto p-3 sm:p-4 bg-amber-950/20 border border-amber-500/30 rounded-lg flex items-center lg:block justify-between">
                         <div className="flex items-center gap-2 text-amber-400 text-xs font-semibold">
-                            <CheckCircle2 className="w-4 h-4 text-amber-400" /> Active Context
+                            <CheckCircle2 className="w-4 h-4 text-amber-400" />{" "}
+                            Active Context
                         </div>
                         <p className="text-xs sm:text-sm font-mono lg:mt-1 text-zinc-200 truncate">
                             {activeRepo}
@@ -260,14 +339,19 @@ export default function Home() {
                 <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
                     {messages.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-zinc-500 text-xs sm:text-sm text-center px-4">
-                            <p>Ingest a public GitHub repository to start asking questions.</p>
+                            <p>
+                                Ingest a public GitHub repository to start
+                                asking questions.
+                            </p>
                         </div>
                     ) : (
                         messages.map((msg, i) => (
                             <div
                                 key={i}
                                 className={`flex flex-col ${
-                                    msg.role === "user" ? "items-end" : "items-start"
+                                    msg.role === "user"
+                                        ? "items-end"
+                                        : "items-start"
                                 }`}
                             >
                                 <div
@@ -277,7 +361,9 @@ export default function Home() {
                                             : "bg-zinc-900 border border-zinc-800 text-zinc-200"
                                     }`}
                                 >
-                                    <p className="whitespace-pre-wrap">{msg.content}</p>
+                                    <p className="whitespace-pre-wrap">
+                                        {msg.content}
+                                    </p>
 
                                     {msg.sources && msg.sources.length > 0 && (
                                         <div className="mt-3 pt-3 border-t border-zinc-800">

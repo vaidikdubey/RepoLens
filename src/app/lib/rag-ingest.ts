@@ -61,7 +61,7 @@ function chunkText(text: string, chunkSize = 1000, overlap = 100): string[] {
             nextStart++;
         }
 
-        start = Math.max(start + 1, nextStart);
+        start = nextStart > start ? nextStart : end;
     }
 
     return chunks;
@@ -76,7 +76,7 @@ function isLowSurrogate(code: number): boolean {
 }
 
 //List of allowed file extension
-const VALID_EXTENSIONS = [
+export const VALID_EXTENSIONS = [
     ".ts",
     ".tsx",
     ".js",
@@ -89,10 +89,14 @@ const VALID_EXTENSIONS = [
     ".prisma",
     ".go",
     ".rs",
+    ".cpp",
+    ".h",
+    ".c",
+    ".cmake",
 ];
 
 //Skip auto-generated files, lock files and static assets
-const IGNORED_PATTERNS = [
+export const IGNORED_PATTERNS = [
     "package-lock.json",
     "pnpm-lock.yaml",
     "yarn.lock",
@@ -208,17 +212,42 @@ export async function ingestGithubRepo(
         if (idx % 10 === 0 && idx > 0) await delay(200);
     }
 
+    console.log("Total files after filter:", files.length);
+    console.log("Total chunks:", allChunksWithMeta.length);
+    console.log(
+        "File paths being ingested:",
+        files.map((f) => f.path),
+    );
+
     if (allChunksWithMeta.length === 0)
         throw new Error("No eligible source code found to ingest.");
 
+    const estimatedMinutes = Math.ceil(
+        ((allChunksWithMeta.length / 8) * 2) / 60,
+    );
+
+    if (allChunksWithMeta.length > 300) {
+        onProgress?.(
+            `Large repo detected (${allChunksWithMeta.length} chunks). Estimated time: ~${estimatedMinutes} Ingestion will take longer due to API rate limits...`,
+            35,
+        );
+
+        await delay(3000); //Let user read the warning
+    }
+
     onProgress?.(
-        `Generating batch embeddings for ${allChunksWithMeta.length} code chunks...`,
+        `Generating batch embeddings for ${allChunksWithMeta.length} code chunks. Estimated time: ~${estimatedMinutes}`,
         40,
     );
 
-    //Batching gemini embeddings with exponential backoff
+    //Adaptive rate limiting state
+    let consecutiveSuccesses = 0;
+    let currentDelay = 2000; //2s
+    const MIN_DELAY = 1500;
+    const MAX_DELAY = 30000;
+
     const vectorsToUpsert: VectorRecord[] = [];
-    const EMBED_BATCH_SIZE = 16; //Batch items per embedding call
+    const EMBED_BATCH_SIZE = 8; //Batch items per embedding call
 
     for (let i = 0; i < allChunksWithMeta.length; i += EMBED_BATCH_SIZE) {
         const batch = allChunksWithMeta.slice(i, i + EMBED_BATCH_SIZE);
@@ -226,13 +255,13 @@ export async function ingestGithubRepo(
 
         let success = false;
         let retries = 0;
-        const maxRetries = 5;
+        const maxRetries = 8;
 
         // Retry loop with exponential backoff for Gemini 429 rate limits
         while (!success && retries < maxRetries) {
             try {
                 // Enforcing a strict minimum delay between requests to avoid rate limits
-                await delay(1200);
+                await delay(currentDelay);
 
                 //3. Generate vector embedding with Gemini (or selected model) with created batch of 10
                 const embeddingResponse = await ai.models.embedContent({
@@ -262,19 +291,28 @@ export async function ingestGithubRepo(
                 });
 
                 success = true;
+                consecutiveSuccesses++;
+
+                //Gradually speed up after 5 consecutive successes
+                if (consecutiveSuccesses >= 5) {
+                    currentDelay = Math.max(MIN_DELAY, currentDelay - 200);
+                    consecutiveSuccesses = 0;
+                }
             } catch (error: unknown) {
                 retries++;
+                consecutiveSuccesses = 0;
 
-                const errorMessage = error instanceof Error ? error.message : String(error)
-                const errorStatus = (error as {status?:number})?.status
+                const errorMessage =
+                    error instanceof Error ? error.message : String(error);
+                const errorStatus = (error as { status?: number })?.status;
 
                 //Check if rate limited (429)
                 if (errorStatus === 429 || errorMessage.includes("429")) {
-                    const backoffTime = Math.pow(2, retries) * 2000; // 4s, 8s, 16s...
+                    currentDelay = Math.min(MAX_DELAY, currentDelay * 2);
                     console.warn(
-                        `Rate limit hit on Gemini API. Backing off for ${backoffTime}ms...`,
+                        `Rate limit hit. Backing off to ${currentDelay}ms. Retry ${retries}/${maxRetries}`,
                     );
-                    await delay(backoffTime);
+                    await delay(currentDelay);
                 } else {
                     console.error(
                         `Error requesting embeddings for batch starting at ${i}:`,
@@ -283,6 +321,13 @@ export async function ingestGithubRepo(
                     break; // Non-rate-limit error, abort retry loop
                 }
             }
+        }
+
+        if (!success) {
+            console.warn(
+                `Skipping batch at index ${i} after ${maxRetries} retries`,
+            );
+            // Don't throw — skip the batch and continue so partial ingestion still works
         }
 
         //For UI updates, to show progress to user. Calculates percentage b/w 40-85
@@ -320,4 +365,48 @@ export async function ingestGithubRepo(
         processedFiles: files.length,
         totalChunks: vectorsToUpsert.length,
     };
+}
+
+export async function estimateRepoChunks(
+    owner: string,
+    repo: string,
+): Promise<{ estimatedChunks: number; fileCount: number }> {
+    const repoInfo = await octokit.rest.repos.get({ owner, repo });
+    const defaultBranch = repoInfo.data.default_branch;
+
+    const treeResponse = await octokit.rest.git.getTree({
+        owner,
+        repo,
+        tree_sha: defaultBranch,
+        recursive: "1",
+    });
+
+    const files = treeResponse.data.tree.filter((item) => {
+        if (item.type !== "blob" || !item.path) return false;
+        const lowerPath = item.path.toLowerCase();
+        if (
+            lowerPath.includes("min.js") ||
+            lowerPath.includes("test") ||
+            lowerPath.includes("spec") ||
+            lowerPath.endsWith(".config.js") ||
+            lowerPath.endsWith(".config.ts")
+        )
+            return false;
+
+        const hasValidExt = VALID_EXTENSIONS.some((ext) =>
+            item.path?.endsWith(ext),
+        );
+        const isNotIgnored = !IGNORED_PATTERNS.some((pattern) =>
+            item.path?.includes(pattern),
+        );
+        const isReasonableSize =
+            (item.size ?? 0) > 50 && (item.size ?? 0) < 80000;
+
+        return hasValidExt && isNotIgnored && isReasonableSize;
+    });
+
+    const totalChars = files.reduce((sum, f) => sum + (f.size ?? 0), 0);
+    const estimatedChunks = Math.ceil(totalChars / 900);
+
+    return { estimatedChunks, fileCount: files.length };
 }
