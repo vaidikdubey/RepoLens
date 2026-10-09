@@ -212,12 +212,12 @@ export async function ingestGithubRepo(
         if (idx % 10 === 0 && idx > 0) await delay(200);
     }
 
-    console.log("Total files after filter:", files.length);
-    console.log("Total chunks:", allChunksWithMeta.length);
-    console.log(
-        "File paths being ingested:",
-        files.map((f) => f.path),
-    );
+    // console.log("Total files after filter:", files.length);
+    // console.log("Total chunks:", allChunksWithMeta.length);
+    // console.log(
+    //     "File paths being ingested:",
+    //     files.map((f) => f.path),
+    // );
 
     if (allChunksWithMeta.length === 0)
         throw new Error("No eligible source code found to ingest.");
@@ -243,8 +243,8 @@ export async function ingestGithubRepo(
     //Adaptive rate limiting state
     let consecutiveSuccesses = 0;
     let currentDelay = 2000; //2s
-    const MIN_DELAY = 1500;
-    const MAX_DELAY = 30000;
+    const MIN_DELAY = 1500; //1.5s
+    const MAX_DELAY = 30000; //30s
 
     const vectorsToUpsert: VectorRecord[] = [];
     const EMBED_BATCH_SIZE = 8; //Batch items per embedding call
@@ -263,7 +263,7 @@ export async function ingestGithubRepo(
                 // Enforcing a strict minimum delay between requests to avoid rate limits
                 await delay(currentDelay);
 
-                //3. Generate vector embedding with Gemini (or selected model) with created batch of 10
+                //3. Generate vector embedding with Gemini (or selected model) with created batch of 8
                 const embeddingResponse = await ai.models.embedContent({
                     model: "gemini-embedding-001",
                     contents,
